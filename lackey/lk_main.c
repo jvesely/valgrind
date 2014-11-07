@@ -768,7 +768,7 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
                   addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
                }
             }
-            if (clo_trace_mem) {
+            if (clo_trace_mem && (clo_trace_imem || clo_trace_merge)) {
                // WARNING: do not remove this function call, even if you
                // aren't interested in instruction reads.  See the comment
                // above the function itself for more detail.
