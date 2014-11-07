@@ -189,6 +189,7 @@ static Bool clo_detailed_counts = False;
 static Bool clo_trace_mem       = False;
 static Bool clo_trace_sbs       = False;
 static Bool clo_trace_imem      = True;
+static Bool clo_trace_merge     = True;
 
 /* The name of the function of which the number of calls (under
  * --basic-counts=yes) is to be counted, with default. Override with command
@@ -202,6 +203,7 @@ static Bool lk_process_cmd_line_option(const HChar* arg)
    else if VG_BOOL_CLO(arg, "--detailed-counts",   clo_detailed_counts) {}
    else if VG_BOOL_CLO(arg, "--trace-mem",         clo_trace_mem) {}
    else if VG_BOOL_CLO(arg, "--trace-imem",        clo_trace_imem) {}
+   else if VG_BOOL_CLO(arg, "--trace-merge",       clo_trace_merge) {}
    else if VG_BOOL_CLO(arg, "--trace-superblocks", clo_trace_sbs) {}
    else
       return False;
@@ -218,6 +220,7 @@ static void lk_print_usage(void)
 "    --detailed-counts=no|yes  count loads, stores and alu ops [no]\n"
 "    --trace-mem=no|yes        trace all loads and stores [no]\n"
 "    --trace-imem=no|yes       include instruction fetches in trace [yes]\n"
+"    --trace-merge=no|yes      merge read followed by write into modify[yes]\n"
 "    --trace-superblocks=no|yes  trace all superblock entries [no]\n"
 "    --fnname=<name>           count calls to <name> (only used if\n"
 "                              --basic-count=yes)  [main]\n"
@@ -605,7 +608,8 @@ void addEvent_Dw ( IRSB* sb, IRAtom* daddr, Int dsize )
 
    // Is it possible to merge this write with the preceding read?
    lastEvt = &events[events_used-1];
-   if (events_used > 0
+   if (clo_trace_merge
+       && events_used > 0
        && lastEvt->ekind == Event_Dr
        && lastEvt->size  == dsize
        && lastEvt->guard == NULL
