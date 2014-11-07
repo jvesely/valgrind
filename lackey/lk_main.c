@@ -188,6 +188,7 @@ static Bool clo_basic_counts    = True;
 static Bool clo_detailed_counts = False;
 static Bool clo_trace_mem       = False;
 static Bool clo_trace_sbs       = False;
+static Bool clo_trace_imem      = True;
 
 /* The name of the function of which the number of calls (under
  * --basic-counts=yes) is to be counted, with default. Override with command
@@ -200,6 +201,7 @@ static Bool lk_process_cmd_line_option(const HChar* arg)
    else if VG_BOOL_CLO(arg, "--basic-counts",      clo_basic_counts) {}
    else if VG_BOOL_CLO(arg, "--detailed-counts",   clo_detailed_counts) {}
    else if VG_BOOL_CLO(arg, "--trace-mem",         clo_trace_mem) {}
+   else if VG_BOOL_CLO(arg, "--trace-imem",        clo_trace_imem) {}
    else if VG_BOOL_CLO(arg, "--trace-superblocks", clo_trace_sbs) {}
    else
       return False;
@@ -215,6 +217,7 @@ static void lk_print_usage(void)
 "    --basic-counts=no|yes     count instructions, jumps, etc. [yes]\n"
 "    --detailed-counts=no|yes  count loads, stores and alu ops [no]\n"
 "    --trace-mem=no|yes        trace all loads and stores [no]\n"
+"    --trace-imem=no|yes       include instruction fetches in trace [yes]\n"
 "    --trace-superblocks=no|yes  trace all superblock entries [no]\n"
 "    --fnname=<name>           count calls to <name> (only used if\n"
 "                              --basic-count=yes)  [main]\n"
@@ -490,7 +493,8 @@ static void flushEvents(IRSB* sb)
       
       // Decide on helper fn to call and args to pass it.
       switch (ev->ekind) {
-         case Event_Ir: helperName = "trace_instr";
+         case Event_Ir: if (!clo_trace_imem) continue;
+                        helperName = "trace_instr";
                         helperAddr =  trace_instr;  break;
 
          case Event_Dr: helperName = "trace_load";
