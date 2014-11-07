@@ -460,24 +460,30 @@ static Event events[N_EVENTS];
 static Int   events_used = 0;
 
 
+static inline void trace(const char *prefix, Addr addr, SizeT size)
+{
+   VG_(printf)("%s %08lx,%lu\n", prefix, addr, size);
+}
+
+
 static VG_REGPARM(2) void trace_instr(Addr addr, SizeT size)
 {
-   VG_(printf)("I  %08lx,%lu\n", addr, size);
+   trace("I ", addr, size);
 }
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 {
-   VG_(printf)(" L %08lx,%lu\n", addr, size);
+   trace(" L", addr, size);
 }
 
 static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 {
-   VG_(printf)(" S %08lx,%lu\n", addr, size);
+   trace(" S", addr, size);
 }
 
 static VG_REGPARM(2) void trace_modify(Addr addr, SizeT size)
 {
-   VG_(printf)(" M %08lx,%lu\n", addr, size);
+   trace(" M", addr, size);
 }
 
 
