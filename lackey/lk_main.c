@@ -177,6 +177,7 @@
 #include "pub_tool_libcbase.h"
 #include "pub_tool_options.h"
 #include "pub_tool_machine.h"     // VG_(fnptr_to_fnentry)
+#include "pub_tool_libcfile.h"
 
 /*------------------------------------------------------------*/
 /*--- Command line options                                 ---*/
@@ -190,11 +191,14 @@ static Bool clo_trace_mem       = False;
 static Bool clo_trace_sbs       = False;
 static Bool clo_trace_imem      = True;
 static Bool clo_trace_merge     = True;
+static Bool clo_trace_phys      = False;
 
 /* The name of the function of which the number of calls (under
  * --basic-counts=yes) is to be counted, with default. Override with command
  * line option --fnname. */
 static const HChar* clo_fnname = "main";
+
+static int pagemap_fd = -1;
 
 static Bool lk_process_cmd_line_option(const HChar* arg)
 {
@@ -204,6 +208,7 @@ static Bool lk_process_cmd_line_option(const HChar* arg)
    else if VG_BOOL_CLO(arg, "--trace-mem",         clo_trace_mem) {}
    else if VG_BOOL_CLO(arg, "--trace-imem",        clo_trace_imem) {}
    else if VG_BOOL_CLO(arg, "--trace-merge",       clo_trace_merge) {}
+   else if VG_BOOL_CLO(arg, "--trace-phys",        clo_trace_phys) {}
    else if VG_BOOL_CLO(arg, "--trace-superblocks", clo_trace_sbs) {}
    else
       return False;
@@ -221,6 +226,7 @@ static void lk_print_usage(void)
 "    --trace-mem=no|yes        trace all loads and stores [no]\n"
 "    --trace-imem=no|yes       include instruction fetches in trace [yes]\n"
 "    --trace-merge=no|yes      merge read followed by write into modify[yes]\n"
+"    --trace-phys=no|yes       add physical adresses to mem trace[no]\n"
 "    --trace-superblocks=no|yes  trace all superblock entries [no]\n"
 "    --fnname=<name>           count calls to <name> (only used if\n"
 "                              --basic-count=yes)  [main]\n"
@@ -462,7 +468,26 @@ static Int   events_used = 0;
 
 static inline void trace(const char *prefix, Addr addr, SizeT size)
 {
-   VG_(printf)("%s %08lx,%lu\n", prefix, addr, size);
+   if (clo_trace_phys) {
+      tl_assert(pagemap_fd != -1);
+      const Addr vpn = addr >> VKI_PAGE_SHIFT;
+      const Addr offset = addr & (VKI_PAGE_SIZE - 1);
+      Off64T val = 0;
+      /* TODO it would be nice to use pread... */
+      const Off64T pos = VG_(lseek)(pagemap_fd, vpn * 8, VKI_SEEK_SET);
+      if ((pos != vpn * 8) || (VG_(read)(pagemap_fd, &val, sizeof(val)) == -1))
+      {
+         VG_(printf)("Failed to translate VA\n");
+      } else {
+         /* Upper 10 bits are flags and stuff. This will hopefully be optimized
+          * into something sane, depending on PAGE_SHIFT value */
+         const Addr pfn = ((val << 10) >> 10);
+         const Addr pa = (pfn << VKI_PAGE_SHIFT) | offset;
+         VG_(printf)("%s %08lx,%08lx,%lu\n", prefix, addr, pa, size);
+      }
+   } else {
+      VG_(printf)("%s %08lx,%lu\n", prefix, addr, size);
+   }
 }
 
 
@@ -660,6 +685,9 @@ static void lk_post_clo_init(void)
       for (op = 0; op < N_OPS; op++)
          for (tyIx = 0; tyIx < N_TYPES; tyIx++)
             detailCounts[op][tyIx] = 0;
+   }
+   if (clo_trace_phys) {
+      pagemap_fd = VG_(fd_open)("/proc/self/pagemap", VKI_O_RDONLY, 0);
    }
 }
 
@@ -1055,6 +1083,10 @@ static void lk_fini(Int exitcode)
    if (clo_basic_counts) {
       VG_(umsg)("\n");
       VG_(umsg)("Exit code:       %d\n", exitcode);
+   }
+
+   if (clo_trace_phys) {
+      VG_(close)(pagemap_fd);
    }
 }
 
