@@ -201,6 +201,7 @@ static ULong clo_trace_end      = 0;
 static const HChar* clo_fnname = "main";
 
 static int pagemap_fd = -1;
+static int pagetable_fd = -1;
 static ULong inst_count = 0;
 
 static Bool lk_process_cmd_line_option(const HChar* arg)
@@ -481,20 +482,32 @@ static inline void trace(const char *prefix, Addr addr, SizeT size)
 
    if (clo_trace_phys) {
       tl_assert(pagemap_fd != -1);
+      tl_assert(pagetable_fd != -1);
       const Addr vpn = addr >> VKI_PAGE_SHIFT;
       const Addr offset = addr & (VKI_PAGE_SIZE - 1);
       Off64T val = 0;
       /* TODO it would be nice to use pread... */
-      const Off64T pos = VG_(lseek)(pagemap_fd, vpn * 8, VKI_SEEK_SET);
-      if ((pos != vpn * 8) || (VG_(read)(pagemap_fd, &val, sizeof(val)) == -1))
+      const Off64T pos = VG_(lseek)(pagemap_fd, vpn * sizeof(val), VKI_SEEK_SET);
+      if ((pos != vpn * sizeof(val)) ||
+          (VG_(read)(pagemap_fd, &val, sizeof(val)) != sizeof(val)))
       {
          VG_(printf)("Failed to translate VA\n");
       } else {
-         /* Upper 10 bits are flags and stuff. This will hopefully be optimized
-          * into something sane, depending on PAGE_SHIFT value */
-         const Addr pfn = ((val << 10) >> 10);
-         const Addr pa = (pfn << VKI_PAGE_SHIFT) | offset;
-         VG_(printf)("%s %08lx,%08lx,%lu\n", prefix, addr, pa, size);
+         Off64T pt[4] = {};
+         const Off64T pos = VG_(lseek)(pagetable_fd, vpn * sizeof(pt), VKI_SEEK_SET);
+         if ((pos != vpn * sizeof(pt)) ||
+             (VG_(read)(pagetable_fd, pt, sizeof(pt)) != sizeof(pt)))
+         {
+            VG_(printf)("Failed to get PT entries\n");
+         } else {
+
+            /* Upper 10 bits are flags and stuff. This will hopefully be
+             * optimized into something sane, depending on PAGE_SHIFT value */
+            const Addr pfn = ((val << 10) >> 10);
+            const Addr pa = (pfn << VKI_PAGE_SHIFT) | offset;
+            VG_(printf)("%s %08lx,%08lx,%08llx,%08llx,%08llx,%08llx,%lu\n",
+                        prefix, addr, pa, pt[0], pt[1], pt[2], pt[3], size);
+         }
       }
    } else {
       VG_(printf)("%s %08lx,%lu\n", prefix, addr, size);
@@ -701,6 +714,7 @@ static void lk_post_clo_init(void)
    }
    if (clo_trace_phys) {
       pagemap_fd = VG_(fd_open)("/proc/self/pagemap", VKI_O_RDONLY, 0);
+      pagetable_fd = VG_(fd_open)("/proc/self/pagetable", VKI_O_RDONLY, 0);
    }
 }
 
@@ -1101,6 +1115,7 @@ static void lk_fini(Int exitcode)
 
    if (clo_trace_phys) {
       VG_(close)(pagemap_fd);
+      VG_(close)(pagetable_fd);
    }
 }
 
