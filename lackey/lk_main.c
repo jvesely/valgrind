@@ -505,8 +505,10 @@ static inline void trace(const char *prefix, Addr addr, SizeT size)
              * optimized into something sane, depending on PAGE_SHIFT value */
             const Addr pfn = ((val << 10) >> 10);
             const Addr pa = (pfn << VKI_PAGE_SHIFT) | offset;
-            VG_(printf)("%s %08lx,%08lx,%08llx,%08llx,%08llx,%08llx,%lu\n",
-                        prefix, addr, pa, pt[0], pt[1], pt[2], pt[3], size);
+//            VG_(printf)("%s %08lx,%08lx,%08llx,%08llx,%08llx,%08llx,%lu\n",
+//                        prefix, addr, pa, pt[0], pt[1], pt[2], pt[3], size);
+            VG_(printf)("%08lx:%s:%08lx:%08llx:%08llx:%08llx:%08llx:%lu\n",
+                        addr, prefix, pa, pt[0], pt[1], pt[2], pt[3], size);
          }
       }
    } else {
@@ -524,12 +526,12 @@ static VG_REGPARM(2) void trace_instr(Addr addr, SizeT size)
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 {
-   trace(" L", addr, size);
+   trace("R", addr, size);
 }
 
 static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 {
-   trace(" S", addr, size);
+   trace("W", addr, size);
 }
 
 static VG_REGPARM(2) void trace_modify(Addr addr, SizeT size)
