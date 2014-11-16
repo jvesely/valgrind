@@ -192,6 +192,8 @@ static Bool clo_trace_sbs       = False;
 static Bool clo_trace_imem      = True;
 static Bool clo_trace_merge     = True;
 static Bool clo_trace_phys      = False;
+static ULong clo_trace_start    = 0;
+static ULong clo_trace_end      = 0;
 
 /* The name of the function of which the number of calls (under
  * --basic-counts=yes) is to be counted, with default. Override with command
@@ -199,6 +201,7 @@ static Bool clo_trace_phys      = False;
 static const HChar* clo_fnname = "main";
 
 static int pagemap_fd = -1;
+static ULong inst_count = 0;
 
 static Bool lk_process_cmd_line_option(const HChar* arg)
 {
@@ -210,6 +213,8 @@ static Bool lk_process_cmd_line_option(const HChar* arg)
    else if VG_BOOL_CLO(arg, "--trace-merge",       clo_trace_merge) {}
    else if VG_BOOL_CLO(arg, "--trace-phys",        clo_trace_phys) {}
    else if VG_BOOL_CLO(arg, "--trace-superblocks", clo_trace_sbs) {}
+   else if VG_INT_CLO(arg,  "--trace-start",       clo_trace_start) {}
+   else if VG_INT_CLO(arg,  "--trace-end",         clo_trace_end) {}
    else
       return False;
    
@@ -228,6 +233,8 @@ static void lk_print_usage(void)
 "    --trace-merge=no|yes      merge read followed by write into modify[yes]\n"
 "    --trace-phys=no|yes       add physical adresses to mem trace[no]\n"
 "    --trace-superblocks=no|yes  trace all superblock entries [no]\n"
+"    --trace-start=<number>    start trace after <number> instructions [0]\n"
+"    --trace-end=<number>      end trace after <number> instructions, 0 means never [0]\n"
 "    --fnname=<name>           count calls to <name> (only used if\n"
 "                              --basic-count=yes)  [main]\n"
    );
@@ -468,6 +475,10 @@ static Int   events_used = 0;
 
 static inline void trace(const char *prefix, Addr addr, SizeT size)
 {
+   if (inst_count < clo_trace_start ||
+      (clo_trace_end && (inst_count > clo_trace_end)))
+      return;
+
    if (clo_trace_phys) {
       tl_assert(pagemap_fd != -1);
       const Addr vpn = addr >> VKI_PAGE_SHIFT;
@@ -493,7 +504,9 @@ static inline void trace(const char *prefix, Addr addr, SizeT size)
 
 static VG_REGPARM(2) void trace_instr(Addr addr, SizeT size)
 {
-   trace("I ", addr, size);
+   ++inst_count;
+   if (clo_trace_imem)
+      trace("I ", addr, size);
 }
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
@@ -527,7 +540,7 @@ static void flushEvents(IRSB* sb)
       
       // Decide on helper fn to call and args to pass it.
       switch (ev->ekind) {
-         case Event_Ir: if (!clo_trace_imem) continue;
+         case Event_Ir:
                         helperName = "trace_instr";
                         helperAddr =  trace_instr;  break;
 
@@ -802,7 +815,8 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
                   addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
                }
             }
-            if (clo_trace_mem && (clo_trace_imem || clo_trace_merge)) {
+            if (clo_trace_mem && (clo_trace_imem || clo_trace_merge
+                || clo_trace_start || clo_trace_end)) {
                // WARNING: do not remove this function call, even if you
                // aren't interested in instruction reads.  See the comment
                // above the function itself for more detail.
