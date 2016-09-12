@@ -1,0 +1,162 @@
+From 66acebed284ac5db87c775c9c32d2eb9d21b999a Mon Sep 17 00:00:00 2001
+From: Jan Vesely <jan.vesely@rutgers.edu>
+Date: Wed, 12 Nov 2014 22:21:37 -0500
+Subject: [PATCH 1/1] provide PT dumps
+
+Signed-off-by: Jan Vesely <jan.vesely@rutgers.edu>
+---
+ fs/proc/base.c     |   2 ++
+ fs/proc/internal.h |   1 +
+ fs/proc/task_mmu.c | 104 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 107 insertions(+)
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 1485e38..e16abee 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -2606,6 +2606,7 @@ static const struct pid_entry tgid_base_stuff[] = {
+ 	REG("clear_refs", S_IWUSR, proc_clear_refs_operations),
+ 	REG("smaps",      S_IRUGO, proc_pid_smaps_operations),
+ 	REG("pagemap",    S_IRUGO, proc_pagemap_operations),
++	REG("pagetable",    S_IRUGO, proc_pagetable_operations),
+ #endif
+ #ifdef CONFIG_SECURITY
+ 	DIR("attr",       S_IRUGO|S_IXUGO, proc_attr_dir_inode_operations, proc_attr_dir_operations),
+@@ -2944,6 +2945,7 @@ static const struct pid_entry tid_base_stuff[] = {
+ 	REG("clear_refs", S_IWUSR, proc_clear_refs_operations),
+ 	REG("smaps",     S_IRUGO, proc_tid_smaps_operations),
+ 	REG("pagemap",    S_IRUGO, proc_pagemap_operations),
++	REG("pagetable",    S_IRUGO, proc_pagetable_operations),
+ #endif
+ #ifdef CONFIG_SECURITY
+ 	DIR("attr",      S_IRUGO|S_IXUGO, proc_attr_dir_inode_operations, proc_attr_dir_operations),
+diff --git a/fs/proc/internal.h b/fs/proc/internal.h
+index 651d09a..47d10b6 100644
+--- a/fs/proc/internal.h
++++ b/fs/proc/internal.h
+@@ -290,6 +290,7 @@ extern const struct file_operations proc_pid_smaps_operations;
+ extern const struct file_operations proc_tid_smaps_operations;
+ extern const struct file_operations proc_clear_refs_operations;
+ extern const struct file_operations proc_pagemap_operations;
++extern const struct file_operations proc_pagetable_operations;
+ 
+ extern unsigned long task_vsize(struct mm_struct *);
+ extern unsigned long task_statm(struct mm_struct *,
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index 7a9e255..01cd82a 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -1212,6 +1212,110 @@ const struct file_operations proc_pagemap_operations = {
+ 	.read		= pagemap_read,
+ 	.open		= pagemap_open,
+ };
++
++
++typedef struct {
++	u64 pgd;
++	u64 pud;
++	u64 pmd;
++	u64 pte;
++} pagetable_entry_t;
++
++#define PT_ENTRY_BYTES  (sizeof(pagetable_entry_t))
++
++/*
++ * /proc/pid/pagetable - an array mapping virtual pages to PT structure
++ *
++ * For each page in the address space, this file contains one 256-bit entry
++ * consisting of the following:
++ *
++ * Bits 0-63     address of the pgd entry
++ * Bits 64-127   address of the pud entry
++ * Bits 128-191  address of the pmd entry
++ * Bits 192-255  address of the pte entry
++ *
++ * If any entry is not present (due to being unmapped or using huge pages),
++ * its address is 0xdeadbeef.
++ *
++ * Efficient users of this interface will use /proc/pid/maps to
++ * determine which areas of memory are actually mapped and llseek to
++ * skip over unmapped regions.
++ */
++static ssize_t pagetable_read(struct file *file, char __user *buf,
++			      size_t count, loff_t *ppos)
++{
++	struct task_struct *task = get_proc_task(file_inode(file));
++	struct mm_struct *mm;
++	int ret = -ESRCH;
++	pgd_t *pgd;
++	pud_t *pud;
++	pmd_t *pmd;
++	u64 addr;
++	pagetable_entry_t res = { 0xdeadbeef, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef };
++
++	if (!task)
++		goto out;
++
++	ret = -EINVAL;
++	/* file position must be aligned */
++	if ((*ppos % PT_ENTRY_BYTES) || (count % PT_ENTRY_BYTES))
++		goto out_task;
++
++	ret = 0;
++	if (!count)
++		goto out_task;
++
++	mm = mm_access(task, PTRACE_MODE_READ);
++	ret = PTR_ERR(mm);
++	if (!mm || IS_ERR(mm))
++		goto out_task;
++
++	addr = ((*ppos) / PT_ENTRY_BYTES) << PAGE_SHIFT;
++	for (ret = 0; ret >= 0 && ret < count; ) {
++		down_read(&mm->mmap_sem);
++		pgd = pgd_offset(mm, addr);
++		res.pgd = __pa(pgd);
++		//TODO do something smarter to get fanout info
++		if (pgd_present(*pgd) && !pgd_bad(*pgd) && ((pgd_val(*pgd) & 0x3) == 0x3)) {
++			pud = pud_offset(pgd, addr);
++			res.pud = __pa(pud);
++			//TODO do something smarter to get fanout info
++			if (pud_present(*pud) && !pud_bad(*pud) && ((pud_val(*pud) & 0x3) == 0x3)) {
++				pmd = pmd_offset(pud, addr);
++				res.pmd = __pa(pmd);
++				//TODO do something smarter to get fanout info
++				if (pmd_present(*pmd) && !pmd_bad(*pmd) && (pmd_val(*pmd) & 0x3) == 0x3) {
++					res.pte = page_to_phys(pmd_page(*pmd)) + (pte_index(addr) * sizeof(pte_t));
++				}
++			}
++		}
++		up_read(&mm->mmap_sem);
++		if (copy_to_user(buf, &res, sizeof(res))) {
++			ret = -EFAULT;
++		} else {
++			buf += sizeof(res);
++			ret += sizeof(res);
++			addr += PAGE_SIZE;
++		}
++	}
++
++	mmput(mm);
++out_task:
++	put_task_struct(task);
++out:
++	return ret;
++}
++
++static int pagetable_open(struct inode *inode, struct file *file)
++{
++	return 0;
++}
++
++const struct file_operations proc_pagetable_operations = {
++	.llseek		= mem_lseek, /* borrow this */
++	.read		= pagetable_read,
++	.open           = pagetable_open
++};
+ #endif /* CONFIG_PROC_PAGE_MONITOR */
+ 
+ #ifdef CONFIG_NUMA
+-- 
+1.9.3
+
